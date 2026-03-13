@@ -285,6 +285,51 @@ function linkZap(tel) {
         }
     }
 </script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
 
+<script>
+// Configuração simples de um banco de dados no navegador (IndexedDB)
+const DB_NAME = 'MeuBancoLeads';
+const FILE_LIST = ['1.csv', '2.csv'];
+
+async function iniciarAplicacao() {
+    const dadosExistem = localStorage.getItem('db_inicializado');
+
+    if (!dadosExistem) {
+        console.log("Banco vazio. Carregando arquivos iniciais...");
+        await carregarArquivosIniciais();
+    } else {
+        console.log("Dados já carregados anteriormente.");
+    }
+}
+
+async function carregarArquivosIniciais() {
+    for (const arquivo of FILE_LIST) {
+        try {
+            const resposta = await fetch(arquivo);
+            const csvTexto = await resposta.text();
+            
+            // Converte CSV para Objeto JS
+            Papa.parse(csvTexto, {
+                header: true,
+                complete: function(results) {
+                    salvarNoBanco(results.data, arquivo);
+                }
+            });
+        } catch (erro) {
+            console.error(`Erro ao carregar ${arquivo}:`, erro);
+        }
+    }
+    localStorage.setItem('db_inicializado', 'true');
+}
+
+function salvarNoBanco(dados, nomeArquivo) {
+    // Aqui você integraria com sua lógica de salvar leads ou dados acadêmicos
+    console.log(`Salvando ${dados.length} linhas vindas de ${nomeArquivo}`);
+    // Exemplo: salvar em uma variável global ou no IndexedDB
+}
+
+window.onload = iniciarAplicacao;
+</script>
 </body>
 </html>
