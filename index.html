@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lead Scraper | High Performance</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+
+    <style>
+        body { background-color: #f4f7f6; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+        .gap-2 { gap: 0.5rem !important; }
+        
+        /* Loader */
+        #loader {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.9); z-index: 9999;
+            display: none; align-items: center; justify-content: center; flex-direction: column;
+        }
+
+        /* Estilo Botões Modelo Protocolo */
+        .btn-success { background-color: #28a745; border: none; border-radius: 20px; font-size: 0.8rem; padding: 8px 20px; transition: all 0.2s; }
+        .btn-success:hover { background-color: #218838; transform: translateY(-1px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        
+        .card { border: none; border-radius: 15px; box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075); }
+        
+        /* Tabela Responsiva Otimizada */
+        .table { font-size: 0.9rem; }
+        .table thead th { background-color: #f8f9fa; text-transform: uppercase; font-size: 0.75rem; color: #666; border-bottom: 2px solid #edf2f7; }
+        
+        /* Ajuste para não quebrar layout no mobile */
+        @media (max-width: 768px) {
+            .hide-mobile { display: none; }
+            .btn-sm-mobile { padding: 5px 10px; font-size: 0.7rem; }
+        }
+
+        .cnpj-badge { font-family: 'Monaco', monospace; background: #e9ecef; color: #495057; padding: 4px 8px; border-radius: 5px; font-size: 0.8rem; }
+    </style>
+</head>
+<body>
+
+<div id="loader">
+    <div class="spinner-border text-success" role="status"></div>
+    <h5 class="mt-3">Processando Leads...</h5>
+</div>
+
+<div class="container-fluid pt-3 px-3 px-md-4">
+    
+    <div class="row mb-3">
+        <div class="col-12">
+            <div class="card p-3 bg-white">
+                <div class="row align-items-center">
+                    <div class="col-md-6 col-12 mb-2 mb-md-0">
+                        <label class="small fw-bold text-muted text-uppercase mb-1">Importar CSV (Sequenciais):</label>
+                        <input type="file" id="csvInput" class="form-control border-success" accept=".csv,*" multiple>
+                    </div>
+                    <div class="col-md-6 col-12 text-md-end">
+                        <button class="btn btn-outline-danger btn-sm" onclick="limparBanco()">
+                            <i class="fa fa-trash"></i> Limpar Banco
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-white p-4">
+        <div class="row align-items-center mb-4">
+            <div class="col-lg-5 col-12">
+                <h5 class="fw-bold mb-0">
+                    Protocolo: <span class="text-success">LISTAGEM DE LEADS</span>
+                    <small class="text-muted d-block d-md-inline" id="totalCount">(Total: 0)</small>
+                </h5>
+            </div>
+            <div class="col-lg-7 col-12 mt-3 mt-lg-0">
+                <div class="input-group">
+                    <input type="text" class="form-control" id="txtBusca" placeholder="Busca rápida por CNPJ, Nome ou Cidade...">
+                    <button class="btn btn-success" onclick="resetPaginaEBucar()"><i class="fa fa-search"></i> Buscar</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th>CNPJ / Info</th>
+                        <th>Razão Social</th>
+                        <th class="hide-mobile">Atividade (CNAE)</th>
+                        <th class="hide-mobile">Localização</th>
+                    </tr>
+                </thead>
+                <tbody id="listaLeads">
+                    </tbody>
+            </table>
+        </div>
+
+        <div class="d-flex justify-content-between align-items-center mt-4">
+            <button class="btn btn-outline-secondary btn-sm" id="btnAnterior" onclick="mudarPagina(-1)" disabled>Anterior</button>
+            <span class="small text-muted" id="pageInfo">Página 1</span>
+            <button class="btn btn-outline-secondary btn-sm" id="btnProximo" onclick="mudarPagina(1)">Próximo</button>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+<script>
+    const DB_NAME = 'LeadScraperDB';
+    const STORE_NAME = 'leads';
+    let db;
+    let currentPage = 0;
+    const pageSize = 50; // Apenas 50 por vez para performance máxima
+
+    // Inicializar Banco
+    const req = indexedDB.open(DB_NAME, 2);
+    req.onupgradeneeded = (e) => {
+        const dbRes = e.target.result;
+        if (!dbRes.objectStoreNames.contains(STORE_NAME)) {
+            const store = dbRes.createObjectStore(STORE_NAME, { keyPath: 'CNPJ' });
+            store.createIndex('razao', 'RAZAO SOCIAL', { unique: false });
+        }
+    };
+    req.onsuccess = (e) => {
+        db = e.target.result;
+        carregarLeads();
+    };
+
+    // Função de Busca e Reset
+    function resetPaginaEBucar() {
+        currentPage = 0;
+        carregarLeads();
+    }
+
+    // Carregamento com Cursor (Otimizado para milhares de linhas)
+    function carregarLeads() {
+        const searchTerm = document.getElementById('txtBusca').value.toLowerCase();
+        const transaction = db.transaction([STORE_NAME], 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const list = document.getElementById('listaLeads');
+        list.innerHTML = '';
+        
+        let skip = currentPage * pageSize;
+        let count = 0;
+        let displayed = 0;
+        let totalFiltrados = 0; 
+
+        store.openCursor().onsuccess = (event) => {
+            const cursor = event.target.result;
+            if (!cursor) {
+                 document.getElementById('totalCount').innerText = `(Encontrados: ${totalFiltrados})`;
+                document.getElementById('btnProximo').disabled = displayed < pageSize;
+                return;
+            }
+
+            const data = cursor.value;
+
+            // Lógica de busca expandida
+            const match = !searchTerm || 
+                          (data.CNPJ && data.CNPJ.includes(searchTerm)) || 
+                          (data['RAZAO SOCIAL'] && data['RAZAO SOCIAL'].toLowerCase().includes(searchTerm)) ||
+                          (data['CIDADE'] && data['CIDADE'].toLowerCase().includes(searchTerm)) ||
+                          (data['CNAE'] && data['CNAE'].includes(searchTerm)) || // Busca pelo código (números)
+                          (data['DESC CNAE'] && data['DESC CNAE'].toLowerCase().includes(searchTerm)); // Busca pela descrição textualmente
+
+            if (match) {
+             totalFiltrados++;
+                if (count >= skip && displayed < pageSize) {
+                    renderRow(data);
+                    displayed++;
+                }
+                count++;
+            }
+            cursor.continue();
+        };
+        
+        document.getElementById('pageInfo').innerText = `Página ${currentPage + 1}`;
+        document.getElementById('btnAnterior').disabled = currentPage === 0;
+    }
+// Função para aplicar máscara de CNPJ (00.000.000/0000-00)
+function formatarCNPJ(cnpj) {
+    if (!cnpj) return "";
+    let v = cnpj.replace(/\D/g, "");
+    if (v.length !== 14) return v; // Retorna original se não tiver 14 dígitos
+    return v.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
+}
+
+// Função para gerar o link do WhatsApp
+function linkZap(tel) {
+    if (!tel) return "#";
+    // Remove tudo que não for número
+    let num = tel.replace(/\D/g, "");
+    // Se o número for brasileiro e não tiver o 55, adiciona
+    if (num.length >= 10 && !num.startsWith("55")) {
+        num = "55" + num;
+    }
+    return `https://api.whatsapp.com/send?phone=${num}`;
+}
+    function renderRow(row) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+<td>
+    <div class="cnpj-badge mb-1" style="letter-spacing: 0.5px; white-space: nowrap; display: inline-block;">
+        ${formatarCNPJ(row.CNPJ)}
+    </div>
+    
+    <div style="white-space: nowrap;">
+        ${row.TELEFONE && row.TELEFONE !== '-' ? `
+            <a href="${linkZap(row.TELEFONE)}" target="_blank" 
+               class="text-decoration-none fw-bold" 
+               style="color: #25D366; font-size: 0.85rem;">
+                <i class="fa fa-whatsapp"></i> ${row.TELEFONE}
+            </a>
+        ` : `
+            <span class="text-muted small"><i class="fa fa-phone"></i> -</span>
+        `}
+    </div>
+</td>
+            <td>
+                <div class="fw-bold text-dark">${row['RAZAO SOCIAL'] || 'N/A'}</div>
+                <div class="text-muted small text-truncate" style="max-width: 200px;">${row['FANTASIA'] || '-'}</div>
+            </td>
+            <td class="hide-mobile">
+                <div class="small text-muted" style="line-height: 1.2; min-width: 200px; white-space: normal;">
+                    ${row['DESC CNAE'] || '-'}
+                </div>
+            </td>
+            <td class="hide-mobile">
+                <div class="fw-bold text-dark small" style="line-height: 1.2;">
+                    ${row.LOGRADOURO || ''}, ${row.NUMERO || 'S/N'}
+                </div>
+                <div class="text-muted" style="font-size: 0.75rem;">
+                    ${row.BAIRRO || '-'}
+                </div>
+                <div class="small mt-1">
+                    <i class="fa fa-map-marker text-success" style="font-size: 0.7rem;"></i> 
+                    ${row.CIDADE || '-'} / ${row.UF || '-'}
+                </div>
+            </td>
+        `;
+        document.getElementById('listaLeads').appendChild(tr);
+    }
+
+    function mudarPagina(dir) {
+        currentPage += dir;
+        carregarLeads();
+        window.scrollTo(0,0);
+    }
+
+    // Importação Robusta
+    document.getElementById('csvInput').onchange = (e) => {
+        const files = Array.from(e.target.files);
+        if(!files.length) return;
+        
+        document.getElementById('loader').style.display = 'flex';
+        let filesProcessed = 0;
+
+        files.forEach(file => {
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                chunk: (results, parser) => {
+                    const tx = db.transaction([STORE_NAME], 'readwrite');
+                    const store = tx.objectStore(STORE_NAME);
+                    results.data.forEach(item => { if(item.CNPJ) store.put(item); });
+                },
+                complete: () => {
+                    filesProcessed++;
+                    if(filesProcessed === files.length) {
+                        setTimeout(() => {
+                            document.getElementById('loader').style.display = 'none';
+                            location.reload();
+                        }, 1000);
+                    }
+                }
+            });
+        });
+    };
+
+    function limparBanco() {
+        if(confirm("Apagar todos os dados salvos?")) {
+            const tx = db.transaction([STORE_NAME], 'readwrite');
+            tx.objectStore(STORE_NAME).clear();
+            tx.oncomplete = () => location.reload();
+        }
+    }
+</script>
+
+</body>
+</html>
