@@ -10,29 +10,37 @@
         body { background-color: #f4f7f6; font-family: 'Inter', sans-serif; }
         #loader {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(255,255,255,0.9); z-index: 9999;
+            background: rgba(255,255,255,0.95); z-index: 9999;
             display: none; align-items: center; justify-content: center; flex-direction: column;
         }
+        .progress-container { width: 80%; max-width: 500px; margin-top: 20px; }
         .btn-success { background-color: #28a745; border: none; border-radius: 20px; padding: 8px 20px; }
         .card { border: none; border-radius: 15px; box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075); }
-        .table { font-size: 0.9rem; }
         .cnpj-badge { font-family: monospace; background: #e9ecef; padding: 4px 8px; border-radius: 5px; }
-        @media (max-width: 768px) { .hide-mobile { display: none; } }
     </style>
 </head>
 <body>
 
 <div id="loader">
     <div class="spinner-border text-success" role="status"></div>
-    <h5 class="mt-3">Processando Dados...</h5>
+    <h5 class="mt-3" id="loaderText">Processando...</h5>
+    <div class="progress-container">
+        <div class="progress" style="height: 25px;">
+            <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" style="width: 0%"></div>
+        </div>
+        <div class="d-flex justify-content-between mt-2">
+            <small id="progressPercent" class="fw-bold text-success">0%</small>
+            <small id="progressRows" class="text-muted">0 registros</small>
+        </div>
+    </div>
 </div>
 
 <div class="container-fluid pt-3 px-3">
     <div class="card p-3 mb-3">
         <div class="row align-items-center">
             <div class="col-md-6">
-                <label class="small fw-bold text-muted text-uppercase">Importar Seu CSV:</label>
-                <input type="file" id="csvInput" class="form-control border-success" accept=".csv">
+                <label class="small fw-bold text-muted text-uppercase">Importar CSV:</label>
+                <input type="file" id="csvInput" class="form-control border-success" accept=".csv" disabled>
             </div>
             <div class="col-md-6 text-md-end mt-2 mt-md-0">
                 <button class="btn btn-outline-danger btn-sm" onclick="limparBanco()">Limpar Banco</button>
@@ -42,35 +50,38 @@
 
     <div class="card p-4">
         <div class="row mb-4">
-            <div class="col-md-5">
-                <h5 class="fw-bold">LISTAGEM DE LEADS <small id="totalCount" class="text-muted"></small></h5>
+            <div class="col-md-6">
+                <h5 class="fw-bold m-0">LEADS EXPLORER</h5>
+                <small id="totalCount" class="text-muted">Aguardando...</small>
             </div>
-            <div class="col-md-7">
+            <div class="col-md-6">
                 <div class="input-group">
-                    <input type="text" class="form-control" id="txtBusca" placeholder="Busca por CNPJ, Nome, Cidade...">
+                    <input type="text" class="form-control" id="txtBusca" placeholder="Pesquisar nos dados carregados...">
                     <button class="btn btn-success" onclick="resetPaginaEBucar()">Buscar</button>
                 </div>
             </div>
         </div>
 
         <div class="table-responsive">
-            <table class="table table-hover">
+            <table class="table table-hover align-middle">
                 <thead>
                     <tr>
-                        <th>CNPJ / Contato</th>
-                        <th>Razão Social</th>
-                        <th class="hide-mobile">CNAE</th>
-                        <th class="hide-mobile">Localização</th>
+                        <th>CNPJ / WhatsApp</th>
+                        <th>Empresa / Razão Social</th>
+                        <th>CNAE</th>
+                        <th>Localização</th>
                     </tr>
                 </thead>
-                <tbody id="listaLeads"></tbody>
+                <tbody id="listaLeads">
+                    <tr><td colspan="3" class="text-center py-5 text-muted">A tabela está vazia. Importe um arquivo ou faça uma busca.</td></tr>
+                </tbody>
             </table>
         </div>
 
         <div class="d-flex justify-content-between align-items-center mt-4">
-            <button class="btn btn-outline-secondary btn-sm" id="btnAnterior" onclick="mudarPagina(-1)">Anterior</button>
-            <span id="pageInfo">Página 1</span>
-            <button class="btn btn-outline-secondary btn-sm" id="btnProximo" onclick="mudarPagina(1)">Próximo</button>
+            <button class="btn btn-outline-secondary btn-sm" id="btnAnterior" onclick="mudarPagina(-1)" disabled>Anterior</button>
+            <span id="pageInfo" class="fw-bold">Página 1</span>
+            <button class="btn btn-outline-secondary btn-sm" id="btnProximo" onclick="mudarPagina(1)" disabled>Próximo</button>
         </div>
     </div>
 </div>
@@ -80,77 +91,155 @@
 <script>
     const DB_NAME = 'LeadScraperDB';
     const STORE_NAME = 'leads';
-    let db;
+    let db = null;
     let currentPage = 0;
-    const pageSize = 50;
+    const pageSize = 300;
 
-    // Inicializa IndexedDB
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = (e) => {
-        const dbRes = e.target.result;
-        if (!dbRes.objectStoreNames.contains(STORE_NAME)) {
-            dbRes.createObjectStore(STORE_NAME, { keyPath: 'CNPJ' });
-        }
-    };
-    request.onsuccess = (e) => {
-        db = e.target.result;
-        carregarLeads();
-    };
+    // Aumentei a versão para 10 para evitar o VersionError anterior
+    function initDB() {
+        const request = indexedDB.open(DB_NAME, 10);
 
-    function resetPaginaEBucar() {
-        currentPage = 0;
-        carregarLeads();
+        request.onupgradeneeded = (e) => {
+            const dbRes = e.target.result;
+            if (!dbRes.objectStoreNames.contains(STORE_NAME)) {
+                dbRes.createObjectStore(STORE_NAME, { keyPath: 'CNPJ' });
+            }
+
+        };
+
+        request.onsuccess = (e) => {
+            db = e.target.result;
+            document.getElementById('csvInput').disabled = false;
+            atualizarContagemTotal();
+            // REMOVIDO: carregarLeads() automático. A tabela inicia vazia.
+        };
+
+        request.onerror = (e) => {
+            console.error("Erro ao abrir banco:", e.target.error);
+            alert("Erro de versão do banco. Limpe o cache do navegador ou mude o nome da constante DB_NAME.");
+        };
     }
 
+    function atualizarContagemTotal() {
+        if (!db) return;
+        const store = db.transaction([STORE_NAME], 'readonly').objectStore(STORE_NAME);
+        const req = store.count();
+        req.onsuccess = () => {
+            document.getElementById('totalCount').innerText = `${req.result.toLocaleString('pt-BR')} registros armazenados no total.`;
+        };
+    }
+
+    document.getElementById('csvInput').onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file || !db) return;
+
+        const loader = document.getElementById('loader');
+        const progressBar = document.getElementById('progressBar');
+        const progressPercent = document.getElementById('progressPercent');
+        const progressRows = document.getElementById('progressRows');
+        
+        loader.style.display = 'flex';
+        let totalRowsProcessed = 0;
+
+        Papa.parse(file, {
+            header: true,
+            skipEmptyLines: true,
+            chunkSize: 1024 * 1024 * 2,
+            chunk: (results, parser) => {
+                parser.pause();
+                const tx = db.transaction([STORE_NAME], 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+
+                results.data.forEach(item => {
+                    let cnpjKey = Object.keys(item).find(k => k.trim().toUpperCase() === 'CNPJ');
+                    if (cnpjKey && item[cnpjKey]) {
+                        item['CNPJ'] = item[cnpjKey];
+                        store.put(item);
+                        totalRowsProcessed++;
+                    }
+                });
+
+                tx.oncomplete = () => {
+                    const percent = Math.round((results.meta.cursor / file.size) * 100);
+                    progressBar.style.width = percent + '%';
+                    progressPercent.innerText = percent + '%';
+                    progressRows.innerText = totalRowsProcessed.toLocaleString('pt-BR') + ' registros';
+                    setTimeout(() => parser.resume(), 10);
+                };
+                tx.onerror = () => parser.resume();
+            },
+            complete: () => {
+                setTimeout(() => {
+                    alert("Importação Concluída: " + totalRowsProcessed + " registros.");
+                    location.reload(); // Recarrega para limpar o input e atualizar contagem
+                }, 500);
+            }
+        });
+    };
+
     function carregarLeads() {
-        const searchTerm = document.getElementById('txtBusca').value.toLowerCase();
-        const transaction = db.transaction([STORE_NAME], 'readonly');
-        const store = transaction.objectStore(STORE_NAME);
+        if (!db) return;
+        const searchTerm = document.getElementById('txtBusca').value.toLowerCase().trim();
+        const store = db.transaction([STORE_NAME], 'readonly').objectStore(STORE_NAME);
         const list = document.getElementById('listaLeads');
-        list.innerHTML = '';
         
         let skip = currentPage * pageSize;
-        let count = 0;
+        let countMatches = 0;
         let displayed = 0;
+        let hasMore = false;
+
+        list.innerHTML = '';
 
         store.openCursor().onsuccess = (event) => {
             const cursor = event.target.result;
-            
             if (!cursor) {
-                document.getElementById('btnProximo').disabled = displayed < pageSize;
+                if (displayed === 0) list.innerHTML = '<tr><td colspan="3" class="text-center py-5">Nenhum resultado encontrado para esta busca.</td></tr>';
+                document.getElementById('btnProximo').disabled = !hasMore;
                 document.getElementById('btnAnterior').disabled = currentPage === 0;
                 document.getElementById('pageInfo').innerText = `Página ${currentPage + 1}`;
                 return;
             }
 
             const data = cursor.value;
-            const match = !searchTerm || 
-                          (data.CNPJ && data.CNPJ.includes(searchTerm)) || 
-                          (data['RAZAO SOCIAL'] && data['RAZAO SOCIAL'].toLowerCase().includes(searchTerm)) ||
-                          (data['CIDADE'] && data['CIDADE'].toLowerCase().includes(searchTerm));
+            // Busca simplificada em todo o conteúdo do registro
+            const content = JSON.stringify(data).toLowerCase();
+            const match = searchTerm === "" || content.includes(searchTerm);
 
             if (match) {
-                if (count >= skip && displayed < pageSize) {
+                if (countMatches >= skip && displayed < pageSize) {
                     renderRow(data);
                     displayed++;
+                } else if (countMatches >= skip + pageSize) {
+                    hasMore = true;
+                    if (searchTerm === "") { // Performance: se não houver busca, para o cursor
+                        document.getElementById('btnProximo').disabled = false;
+                        return;
+                    }
                 }
-                count++;
+                countMatches++;
             }
-
-            // Otimização: Se já preenchemos a página e não estamos buscando o total, 
-            // poderíamos parar aqui. Mas para simplificar e manter a lógica de busca:
-            if (displayed < pageSize || searchTerm) {
-                cursor.continue();
-            } else {
-                // Se não há busca, não precisamos percorrer o resto do banco
-                document.getElementById('btnProximo').disabled = false;
-            }
+            cursor.continue();
         };
     }
 
     function renderRow(row) {
+        const list = document.getElementById('listaLeads');
         const tr = document.createElement('tr');
-        tr.innerHTML = `
+        
+        const getVal = (names) => {
+            for(let n of names) {
+                let key = Object.keys(row).find(k => k.trim().toUpperCase() === n.toUpperCase());
+                if(key) return row[key];
+            }
+            return '-';
+        };
+
+        const razao = getVal(['RAZAO SOCIAL', 'NOME', 'RAZAO']);
+        const telefone = getVal(['TELEFONE', 'CELULAR', 'FONE', 'CONTATO']).toString();
+        const cidade = getVal(['CIDADE']);
+        const uf = getVal(['UF', 'ESTADO']);
+
+       tr.innerHTML = `
             <td>
                 <div class="cnpj-badge small">${row.CNPJ || ''}</div>
                 <div class="mt-1">
@@ -169,47 +258,17 @@
                 <span class="text-muted">${row.BAIRRO || ''}</span>
             </td>
         `;
-        document.getElementById('listaLeads').appendChild(tr);
+        list.appendChild(tr);
     }
 
-    function mudarPagina(dir) {
-        currentPage += dir;
-        carregarLeads();
-        window.scrollTo(0,0);
-    }
+    function mudarPagina(dir) { currentPage += dir; carregarLeads(); window.scrollTo(0,0); }
+    function resetPaginaEBucar() { currentPage = 0; carregarLeads(); }
+    function limparBanco() { if(confirm("Apagar todos os dados?")) { 
+        db.transaction([STORE_NAME], 'readwrite').objectStore(STORE_NAME).clear().oncomplete = () => location.reload();
+    }}
 
-    // Importação de CSV
-    document.getElementById('csvInput').onchange = (e) => {
-        const file = e.target.files[0];
-        if(!file) return;
-        
-        document.getElementById('loader').style.display = 'flex';
-
-        Papa.parse(file, {
-            header: true,
-            skipEmptyLines: true,
-            chunkSize: 1024 * 1024 * 2, // 2MB por vez
-            chunk: (results) => {
-                const tx = db.transaction([STORE_NAME], 'readwrite');
-                const store = tx.objectStore(STORE_NAME);
-                results.data.forEach(item => {
-                    if(item.CNPJ) store.put(item);
-                });
-            },
-            complete: () => {
-                alert("Importação concluída!");
-                location.reload();
-            }
-        });
-    };
-
-    function limparBanco() {
-        if(confirm("Apagar todos os dados?")) {
-            const tx = db.transaction([STORE_NAME], 'readwrite');
-            tx.objectStore(STORE_NAME).clear();
-            tx.oncomplete = () => location.reload();
-        }
-    }
+    initDB();
+    
 </script>
 </body>
 </html>
